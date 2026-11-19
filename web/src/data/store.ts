@@ -13,6 +13,15 @@ interface State {
   sessions: Session[]
   events: AttendanceEvent[]
   now: number // simulated clock
+  kioskConnected: boolean
+  kioskCheckins: KioskCheckin[]
+}
+
+/** A face check-in reported by the kiosk bridge (kiosk_bridge.py). */
+export interface KioskCheckin {
+  name: string
+  timestamp: number // epoch ms
+  score: number // face match similarity
 }
 
 const MIN = 60_000
@@ -66,7 +75,7 @@ function seed(): State {
       }
     }
   }
-  return { students, classes, sessions, events, now: Date.now() }
+  return { students, classes, sessions, events, now: Date.now(), kioskConnected: false, kioskCheckins: [] }
 }
 
 function ev(type: AttendanceEvent['type'], studentId: string, sessionId: string, timestamp: number, behaviour?: Behaviour): AttendanceEvent {
@@ -98,8 +107,16 @@ export const liveSession = () => state.sessions.find((s) => s.end === null) ?? n
 export function startSession(classId: string, examMode = false) {
   if (liveSession()) return
   const now = Date.now()
-  set({ now, sessions: [...state.sessions, { id: uid('L'), classId, start: now, end: null, examMode }] })
-  startSimulator()
+  const session: Session = { id: uid('L'), classId, start: now, end: null, examMode }
+  set({ now, sessions: [...state.sessions, session] })
+  if (state.kioskConnected) {
+    // Real camera: count anyone who checked in at the kiosk shortly before class started.
+    state.kioskCheckins
+      .filter((c) => c.timestamp >= now - KIOSK_EARLY_MIN * MIN)
+      .forEach((c) => ingestKioskCheckin(c, session))
+  } else {
+    startSimulator()
+  }
 }
 
 export function endSession() {
@@ -114,6 +131,53 @@ export function toggleExamMode() {
   const live = liveSession()
   if (!live) return
   set({ sessions: state.sessions.map((s) => (s.id === live.id ? { ...s, examMode: !s.examMode } : s)) })
+}
+
+// ---- kiosk bridge (real camera) ----
+const KIOSK_EARLY_MIN = 30 // check-ins up to this long before a class starts still count
+const kioskStudentId = (name: string) => `K-${name}`
+
+function ensureKioskStudent(name: string) {
+  const id = kioskStudentId(name)
+  if (state.students.some((s) => s.id === id)) return
+  // Enrolled faces take every class until there is a real class list to match against.
+  set({ students: [...state.students, { id, name, classIds: state.classes.map((c) => c.id) }] })
+}
+
+function ingestKioskCheckin(c: KioskCheckin, session: Session) {
+  const id = `KE-${c.name}-${c.timestamp}-${session.id}`
+  if (state.events.some((e) => e.id === id)) return
+  ensureKioskStudent(c.name)
+  const e: AttendanceEvent = {
+    id, type: 'enter', studentId: kioskStudentId(c.name), sessionId: session.id,
+    timestamp: c.timestamp, confidence: c.score,
+  }
+  set({ events: [...state.events, e] })
+}
+
+export function setKioskConnected(connected: boolean) {
+  if (connected === state.kioskConnected) return
+  if (connected) stopSimulator() // real check-ins replace the fake ones
+  if (realClock) clearInterval(realClock)
+  realClock = connected ? setInterval(() => set({ now: Date.now() }), 15_000) : null
+  set({ kioskConnected: connected, now: Date.now() })
+}
+let realClock: ReturnType<typeof setInterval> | null = null
+
+/** Called when the bridge (re)connects: who is enrolled, and today's check-ins so far. */
+export function kioskHello(names: string[], checkins: KioskCheckin[]) {
+  names.forEach(ensureKioskStudent)
+  set({ kioskCheckins: checkins })
+  const live = liveSession()
+  if (live) checkins.filter((c) => c.timestamp >= live.start - KIOSK_EARLY_MIN * MIN).forEach((c) => ingestKioskCheckin(c, live))
+}
+
+/** Called for every new face check-in at the kiosk. */
+export function kioskCheckin(c: KioskCheckin) {
+  ensureKioskStudent(c.name)
+  set({ kioskCheckins: [...state.kioskCheckins, c], now: Date.now() })
+  const live = liveSession()
+  if (live) ingestKioskCheckin(c, live)
 }
 
 // ---- camera simulator: 1 real second = 1 simulated minute ----

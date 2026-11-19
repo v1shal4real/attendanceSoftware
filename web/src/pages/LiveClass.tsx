@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { endSession, startSession, toggleExamMode, useStore } from '../data/store'
 import { behaviourLabel, fmtTime, summarise } from '../lib/attendance'
+import KioskCheckins from '../components/KioskCheckins'
 import { Card, Stat, StatusBadge, btnPrimary, btnSecondary } from '../components/ui'
 
 export default function LiveClass() {
-  const { students, classes, sessions, events, now } = useStore()
+  const { students, classes, sessions, events, now, kioskConnected } = useStore()
   const navigate = useNavigate()
   const [classId, setClassId] = useState(classes[0].id)
   const [exam, setExam] = useState(false)
@@ -13,7 +14,7 @@ export default function LiveClass() {
 
   if (!live) {
     return (
-      <div className="mx-auto max-w-md">
+      <div className="mx-auto max-w-md space-y-6">
         <Card title="Start a class">
           <div className="space-y-3">
             <label className="block text-sm">
@@ -28,10 +29,13 @@ export default function LiveClass() {
             </label>
             <button className={`${btnPrimary} w-full`} onClick={() => startSession(classId, exam)}>Start class</button>
             <p className="text-xs text-slate-500">
-              No camera is connected yet, so a simulator generates events (1 second = 1 minute of class).
+              {kioskConnected
+                ? 'Kiosk connected: face check-ins from the last 30 minutes count toward this class.'
+                : 'No kiosk connected, so a simulator generates events (1 second = 1 minute of class).'}
             </p>
           </div>
         </Card>
+        <KioskCheckins />
       </div>
     )
   }
@@ -92,6 +96,8 @@ export default function LiveClass() {
             </div>
           </Card>
         </div>
+        <div className="space-y-6">
+        <KioskCheckins />
         <Card title="Exam mode alerts">
           {!live.examMode ? (
             <p className="text-sm text-slate-500">Exam mode is off. Enable it to track student behaviour.</p>
@@ -108,6 +114,7 @@ export default function LiveClass() {
             </ul>
           )}
         </Card>
+        </div>
       </div>
     </div>
   )

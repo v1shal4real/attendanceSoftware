@@ -8,6 +8,9 @@ import Students from './pages/Students'
 import StudentDetail from './pages/StudentDetail'
 import Reports from './pages/Reports'
 import SessionReport from './pages/SessionReport'
+import { connectKiosk } from './lib/kiosk'
+
+connectKiosk()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
